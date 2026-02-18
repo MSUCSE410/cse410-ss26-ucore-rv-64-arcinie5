@@ -2,6 +2,7 @@
 #include "defs.h"
 #include "loader.h"
 #include "trap.h"
+#include "timer.h" // needed for get_cycle() in scheduler
 
 struct proc pool[NPROC];
 char kstack[NPROC][PAGE_SIZE];
@@ -34,6 +35,14 @@ void proc_init(void)
 		/*
 		* LAB1: you may need to initialize your new fields of proc here
 		*/
+
+		/* Zero out syscall counters so garbage data not counted
+		 * before process makes first system call */
+		for (int i = 0; i < MAX_SYSCALL_NUM; i++) {
+			p->syscall_times[i] = 0;
+		}
+
+		p->start_time = 0; // Zero start_time; real value set in scheduler when process first gets CPU time
 	}
 	idle.kstack = (uint64)boot_stack_top;
 	idle.pid = 0;
@@ -84,6 +93,13 @@ void scheduler(void)
 				/*
 				* LAB1: you may need to init proc start time here
 				*/
+
+				/* Record cycle count very first time process is given the CPU. Done here, not at creation time 
+				 * because process may wait in queue before running */
+				if (p->start_time == 0) {
+					p->start_time = get_cycle();
+				}
+
 				p->state = RUNNING;
 				current_proc = p;
 				swtch(&idle.context, &p->context);
