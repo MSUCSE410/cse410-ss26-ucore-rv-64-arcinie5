@@ -4,6 +4,8 @@
 #include "trap.h"
 #include "vm.h"
 
+#include "timer.h" // needed for get_cycle() in scheduler
+
 struct proc pool[NPROC];
 __attribute__((aligned(16))) char kstack[NPROC][PAGE_SIZE];
 __attribute__((aligned(4096))) char trapframe[NPROC][TRAP_PAGE_SIZE];
@@ -33,6 +35,14 @@ void proc_init(void)
 		/*
 		* LAB1: you may need to initialize your new fields of proc here
 		*/
+		/* Zero out syscall counters so no garbage data is counted
+		 * before the process makes its first system call */
+		for (int i = 0; i < MAX_SYSCALL_NUM; i++) {
+			p->syscall_times[i] = 0;
+		}
+		/* Zero start_time; the real value is set in the scheduler
+		 * when the process first gets CPU time */
+		p->start_time = 0;
 	}
 	idle.kstack = (uint64)boot_stack_top;
 	idle.pid = 0;
@@ -83,6 +93,14 @@ void scheduler(void)
 	for (;;) {
 		for (p = pool; p < &pool[NPROC]; p++) {
 			if (p->state == RUNNABLE) {
+				/* Record the cycle count the very first time
+				 * this process is given the CPU. We do this
+				 * here rather than at creation time because
+				 * the process may wait in the queue before
+				 * actually running */
+				if (p->start_time == 0) {
+					p->start_time = get_cycle();
+				}
 				/*
 				* LAB1: you may need to init proc start time here
 				*/
