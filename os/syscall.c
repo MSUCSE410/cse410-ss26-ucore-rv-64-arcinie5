@@ -36,8 +36,8 @@ uint64 sys_sched_yield()
 uint64 sys_gettimeofday(TimeVal *val, int _tz) // TODO: implement sys_gettimeofday in pagetable. (VA to PA)
 {
 	// YOUR CODE
-	/* val is a user virtual address; we cannot write to it directly.
-	 * Build the result in kernel space first, then copy it out */
+	/* val is user virtual address; we cannot write to it directly.
+	 * Build result in kernel space first, then copy it out */
 	struct proc *p = curr_proc();
 	uint64 cycle = get_cycle();
 	TimeVal tv;
@@ -54,23 +54,19 @@ uint64 sys_gettimeofday(TimeVal *val, int _tz) // TODO: implement sys_gettimeofd
 // Note the return value and PTE flags (especially U,X,W,R)
 uint64 sys_mmap(uint64 start, uint64 len, int port, int flag, int fd)
 {
-	/* len = 0 is a no-op per the spec */
+	/* len = 0 is a no-op
+	 * can't be page-aligned
+	 * bits above lower 3 of port must be 0
+	 * At least one pemission bit set
+	 */
 	if (len == 0)
 		return 0;
-
-	/* start must be page-aligned */
 	if (!PGALIGNED(start))
 		return -1;
-
-	/* len must not exceed 1 GiB */
 	if (len > (1u << 30))
 		return -1;
-
-	/* Bits above the lower 3 of port must all be zero */
 	if (port & ~0x7)
 		return -1;
-
-	/* At least one permission bit must be set; all-zero is meaningless */
 	if ((port & 0x7) == 0)
 		return -1;
 
@@ -87,25 +83,25 @@ uint64 sys_mmap(uint64 start, uint64 len, int port, int flag, int fd)
 	}
 
 	/* Translate port bits into RISC-V PTE permission flags.
-	 * PTE_U must always be set so user mode can access the pages.
-	 * port bit 0 -> PTE_R (readable)
-	 * port bit 1 -> PTE_W (writable)
-	 * port bit 2 -> PTE_X (executable) */
+	 * port bit 0: read
+	 * 1: write
+	 * 2: execute
+	 */
 	int perm = PTE_U;
 	if (port & 0x1) perm |= PTE_R;
 	if (port & 0x2) perm |= PTE_W;
 	if (port & 0x4) perm |= PTE_X;
 
-	/* Allocate and map one physical page per virtual page */
+	/* One physical page per virtual page */
 	for (uint64 va = va0; va < vaend; va += PGSIZE) {
-		/* Request a fresh physical page from the allocator */
+		/* Request fresh physical page from allocator */
 		void *pa = kalloc();
 		if (pa == 0) {
 			/* Out of physical memory; clean up already-mapped pages */
 			uvmunmap(p->pagetable, va0, (va - va0) / PGSIZE, 1);
 			return -1;
 		}
-		/* Zero the page to avoid leaking stale kernel data to user */
+		/* Zero the page (avoids leaking stale kernel data to user) */
 		memset(pa, 0, PGSIZE);
 		/* Install the virtual->physical mapping in the page table */
 		if (mappages(p->pagetable, va, PGSIZE, (uint64)pa, perm) != 0) {
@@ -120,31 +116,31 @@ uint64 sys_mmap(uint64 start, uint64 len, int port, int flag, int fd)
 
 uint64 sys_munmap(uint64 start, uint64 len)
 {
-	/* start must be page-aligned */
+	/* start must be page-aligned 
+	 * len = 0 is no-op
+	 */
 	if (!PGALIGNED(start))
 		return -1;
-
-	/* len = 0 is a no-op */
 	if (len == 0)
 		return 0;
 
 	struct proc *p = curr_proc();
 
-	/* Compute the page-aligned end of the region to unmap */
+	/* End of unmap */
 	uint64 va0  = start;
 	uint64 vaend = PGROUNDUP(start + len);
 
-	/* Verify every page in [va0, vaend) is currently mapped;
-	 * the spec requires an error if any page is unmapped */
+	/* Verify every page [va0, vaend) currently mapped;
+	 * error if any page is unmapped */
 	for (uint64 va = va0; va < vaend; va += PGSIZE) {
 		if (walkaddr(p->pagetable, va) == 0)
-			return -1; // unmapped page found in range
+			return -1; 
 	}
 
-	/* Calculate total number of pages to unmap */
+	/* total number of pages to unmap */
 	uint64 npages = (vaend - va0) / PGSIZE;
 
-	/* Unmap the pages and free the underlying physical memory */
+	/* Unmap pages, free underlying physical memory */
 	uvmunmap(p->pagetable, va0, npages, 1);
 
 	return 0;
