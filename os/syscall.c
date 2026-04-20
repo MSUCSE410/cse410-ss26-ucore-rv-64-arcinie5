@@ -92,15 +92,110 @@ uint64 sys_wait(int pid, uint64 va)
 	return wait(pid, code);
 }
 
-uint64 sys_spawn(uint64 va)
+/* Transferred from Project 2: map anonymous physical pages into
+ * the process's virtual address space with given permissions */
+uint64 sys_mmap(uint64 start, uint64 len, int port, int flag, int fd)
 {
-	// TODO: your job is to complete the sys call
-	return -1;
+	/* len = 0 is a no-op per the spec */
+	if (len == 0)
+		return 0;
+
+	/* start must be page-aligned */
+	if (!PGALIGNED(start))
+		return -1;
+
+	/* len must not exceed 1 GiB */
+	if (len > (1u << 30))
+		return -1;
+
+	/* Bits above the lower 3 of port must all be zero */
+	if (port & ~0x7)
+		return -1;
+
+	/* At least one permission bit must be set */
+	if ((port & 0x7) == 0)
+		return -1;
+
+	struct proc *p = curr_proc();
+	uint64 va0  = start;
+	uint64 vaend = PGROUNDUP(start + len);
+
+	/* Verify no page in [va0, vaend) is already mapped */
+	for (uint64 va = va0; va < vaend; va += PGSIZE) {
+		if (walkaddr(p->pagetable, va) != 0)
+			return -1;
+	}
+
+	/* Build PTE permission flags from port bits */
+	int perm = PTE_U;
+	if (port & 0x1) perm |= PTE_R;
+	if (port & 0x2) perm |= PTE_W;
+	if (port & 0x4) perm |= PTE_X;
+
+	/* Allocate and map one physical page per virtual page */
+	for (uint64 va = va0; va < vaend; va += PGSIZE) {
+		void *pa = kalloc();
+		if (pa == 0) {
+			/* Out of memory; clean up already-mapped pages */
+			uvmunmap(p->pagetable, va0, (va - va0) / PGSIZE, 1);
+			return -1;
+		}
+		memset(pa, 0, PGSIZE);
+		if (mappages(p->pagetable, va, PGSIZE, (uint64)pa, perm) != 0) {
+			kfree(pa);
+			uvmunmap(p->pagetable, va0, (va - va0) / PGSIZE, 1);
+			return -1;
+		}
+	}
+	return 0;
 }
 
-uint64 sys_set_priority(long long prio){
-    // TODO: your job is to complete the sys call
-    return -1;
+/* Transferred from Project 2: unmap and free pages in the given
+ * virtual address range */
+uint64 sys_munmap(uint64 start, uint64 len)
+{
+	if (!PGALIGNED(start))
+		return -1;
+
+	if (len == 0)
+		return 0;
+
+	struct proc *p = curr_proc();
+	uint64 va0  = start;
+	uint64 vaend = PGROUNDUP(start + len);
+
+	/* Every page in the range must already be mapped */
+	for (uint64 va = va0; va < vaend; va += PGSIZE) {
+		if (walkaddr(p->pagetable, va) == 0)
+			return -1;
+	}
+
+	uint64 npages = (vaend - va0) / PGSIZE;
+	uvmunmap(p->pagetable, va0, npages, 1);
+	return 0;
+}
+
+uint64 sys_spawn(uint64 va) {
+    char name[200];
+    struct proc *p = curr_proc();
+    struct proc *np = NULL;
+    copyinstr(p->pagetable, name, va, 200);
+    int id = get_id_by_name(name);
+    if (id < 0) return -1;
+    if ((np = allocproc()) == 0) return -1;
+    np->parent = p;
+    if (loader(id, np) < 0) return -1;
+    np->state = RUNNABLE;
+    add_task(np);
+    return np->pid;
+}
+
+uint64 sys_set_priority(long long prio) {
+    if (prio < 2) return -1;
+    struct proc *p = curr_proc();
+    p->priority = prio;
+    p->pass = BIG_STRIDE / p->priority;
+    return prio;
 }
 
 
@@ -147,6 +242,16 @@ void syscall()
 		break;
 	case SYS_spawn:
 		ret = sys_spawn(args[0]);
+		break;
+	case SYS_mmap:
+		ret = sys_mmap(args[0], args[1], args[2], args[3], args[4]);
+		break;
+	case SYS_munmap:
+		ret = sys_munmap(args[0], args[1]);
+		break;
+	/* sys_set_priority: SYS_setpriority is ID 140 in syscall_ids.h */
+	case SYS_setpriority:
+		ret = sys_set_priority(args[0]);
 		break;
 	default:
 		ret = -1;
