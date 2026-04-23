@@ -3,9 +3,12 @@
 
 #include "riscv.h"
 #include "types.h"
+#include "queue.h"
 
 #define NPROC (512)
 #define FD_BUFFER_SIZE (16)
+/* Large constant for stride scheduling; pass = BIG_STRIDE / priority */
+#define BIG_STRIDE 65536ULL
 
 struct file;
 
@@ -43,8 +46,14 @@ struct proc {
 	uint64 max_page;
 	struct proc *parent; // Parent process
 	uint64 exit_code;
-	struct file *files
-		[FD_BUFFER_SIZE]; //File descriptor table, using to record the files opened by the process
+	struct file *files[FD_BUFFER_SIZE];
+	/* Stride scheduling fields:
+	 * stride accumulates each time this process is scheduled;
+	 * pass is added to stride on each scheduling event;
+	 * priority controls how often this process runs */
+	uint64 stride;
+	long long priority;
+	uint64 pass;
 };
 
 int cpuid();
@@ -55,14 +64,13 @@ void scheduler() __attribute__((noreturn));
 void sched();
 void yield();
 int fork();
-int exec(char *, char **);
+int exec(char *);
 int wait(int, int *);
 void add_task(struct proc *);
 struct proc *pop_task();
 struct proc *allocproc();
+void freeproc(struct proc *);
 int fdalloc(struct file *);
-int init_stdio(struct proc *);
-int push_argv(struct proc *, char **);
 // swtch.S
 void swtch(struct context *, struct context *);
 
