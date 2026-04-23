@@ -99,16 +99,17 @@ found:
 	return p;
 }
 
-// Scheduler never returns.  It loops, doing:
-//  - choose a process to run.
-//  - swtch to start running that process.
-//  - eventually that process transfers control
-//    via swtch back to the scheduler.
+// Scheduler never returns. Loops, chooses a process to run. switches to that process.
+// eventually process transfers control via swtch back to the scheduler.
 void scheduler()
 {
     for (;;) {
         struct proc *p;
         struct proc *chosen = NULL;
+
+		// Scan every slot in process pool to find RUNNABLE process w/ smallest stride. Scan whole pool directly instead of using the task queue,
+		// stride scheduling compares globally to find true minimum. queue only gives FIFO order.
+
         for (p = pool; p < &pool[NPROC]; p++) {
             if (p->state == RUNNABLE) {
                 if (chosen == NULL || p->stride < chosen->stride) {
@@ -119,7 +120,10 @@ void scheduler()
         if (chosen == NULL) {
             panic("all app are over!\n");
         }
+
+        // Advance the chosen process's stride by its pass value.
         chosen->stride += chosen->pass;
+		// Mark process as running & siwtch
         chosen->state = RUNNING;
         current_proc = chosen;
         swtch(&idle.context, &chosen->context);

@@ -175,25 +175,38 @@ uint64 sys_munmap(uint64 start, uint64 len)
 	return 0;
 }
 
+// Creates a new child process (like when you use fork in c/c++) and also executes a chosen program in the same function
 uint64 sys_spawn(uint64 va) {
     char name[200];
     struct proc *p = curr_proc();
     struct proc *np = NULL;
+    // Copy filename string from user virtual address space into kernel memory.
     copyinstr(p->pagetable, name, va, 200);
+    // Look up app in loader's app list.
     int id = get_id_by_name(name);
     if (id < 0) return -1;
+    // Allocate fresh process struct from pool.
     if ((np = allocproc()) == 0) return -1;
     np->parent = p;
+    // Load the target program's binary into the new process's
+    // address space. This is the "exec" half of "fork + exec."
     if (loader(id, np) < 0) return -1;
+    // Mark as RUNNABLE so the stride scheduler finds it on its
+    // next scan of pool[].
     np->state = RUNNABLE;
     add_task(np);
     return np->pid;
 }
 
+// Creates a priority queue, though still just using a simple list 
 uint64 sys_set_priority(long long prio) {
+    // Reject any priority below 2. Priority must be > 1 per the spec
+    // so that BIG_STRIDE / priority gives a meaningful non-zero pass,
     if (prio < 2) return -1;
     struct proc *p = curr_proc();
+    // Update the process's priority.
     p->priority = prio;
+	// Recompute pass based on the new priority.
     p->pass = BIG_STRIDE / p->priority;
     return prio;
 }
